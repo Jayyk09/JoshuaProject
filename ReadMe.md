@@ -1,9 +1,6 @@
-### Joshua Project RAG Based Bot
+# Joshua Project RAG Based Bot
 
-# Datasets Information
-
-## CSV File Shapes
-
+## Datasets Information
 ---
 
 **Database:** Joshua Project People Group Data  
