@@ -4,17 +4,16 @@ import numpy as np
 from typing import Dict, List, Optional, Union
 import logging
 from tqdm import tqdm
+import pickle
 
 # NLP and embedding libraries
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-# For vector storage
-import faiss
-import pickle
+
+# For vector storage - ChromaDB instead of FAISS
+import chromadb
+from chromadb.utils import embedding_functions
 
 # For RAG generation - using a simple approach here
-# The error was in using AutoModelForCausalLM with T5, which is not compatible
-# Replacing with the correct model class
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # Set up logging
@@ -191,20 +190,40 @@ class JoshuaProjectDataProcessor:
 
 
 class VectorStore:
-    """Vector store for document embeddings using FAISS."""
+    """Vector store for document embeddings using ChromaDB."""
     
-    def __init__(self, embedding_model_name: str = 'paraphrase-MiniLM-L6-v2'):
+    def __init__(self, embedding_model_name: str = 'paraphrase-MiniLM-L6-v2', persist_directory: str = None):
         """
         Initialize the vector store.
         
         Args:
             embedding_model_name: Name of the sentence transformer model
+            persist_directory: Directory to persist ChromaDB
         """
         logger.info(f"Initializing vector store with model {embedding_model_name}")
-        self.model = SentenceTransformer(embedding_model_name)
+        
+        # Set up embedding function
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=embedding_model_name
+        )
+        
+        # Initialize ChromaDB client
+        self.client = chromadb.Client()
+        
+        # If persist directory is provided, use PersistentClient instead
+        if persist_directory:
+            os.makedirs(persist_directory, exist_ok=True)
+            self.client = chromadb.PersistentClient(path=persist_directory)
+        
+        # Create or get collection
+        self.collection = self.client.get_or_create_collection(
+            name="joshua_project",
+            embedding_function=self.embedding_function,
+            metadata={"description": "Joshua Project data for RAG"}
+        )
+        
         self.documents = []
-        self.index = None
-        self.embedding_size = self.model.get_sentence_embedding_dimension()
+        self.embedding_model_name = embedding_model_name
     
     def add_documents(self, documents: List[Dict]) -> None:
         """
@@ -216,25 +235,29 @@ class VectorStore:
         logger.info(f"Adding {len(documents)} documents to vector store")
         self.documents = documents
         
-        # Extract texts for embedding
+        # Prepare data for ChromaDB
+        ids = [str(i) for i in range(len(documents))]
         texts = [doc["text"] for doc in documents]
+        metadatas = [doc["metadata"] for doc in documents]
         
-        # Generate embeddings
-        logger.info("Generating embeddings...")
-        embeddings = self.model.encode(texts, show_progress_bar=True, convert_to_numpy=True)
+        # Add documents in batches to avoid memory issues
+        batch_size = 1000
+        for i in range(0, len(documents), batch_size):
+            end_idx = min(i + batch_size, len(documents))
+            logger.info(f"Adding batch {i}-{end_idx} to ChromaDB")
+            
+            batch_ids = ids[i:end_idx]
+            batch_texts = texts[i:end_idx]
+            batch_metadatas = metadatas[i:end_idx]
+            
+            # Add to collection
+            self.collection.add(
+                ids=batch_ids,
+                documents=batch_texts,
+                metadatas=batch_metadatas
+            )
         
-        # Create FAISS index
-        logger.info("Creating FAISS index...")
-        self.index = faiss.IndexFlatL2(self.embedding_size)
-        
-        # Normalize embeddings for cosine similarity
-        faiss.normalize_L2(embeddings)
-        
-        # Add to index
-        self.index = faiss.IndexIDMap(self.index)
-        self.index.add_with_ids(embeddings, np.array(range(len(documents))))
-        
-        logger.info(f"FAISS index created with {self.index.ntotal} vectors")
+        logger.info(f"ChromaDB collection created with {self.collection.count()} vectors")
     
     def save(self, directory: str) -> None:
         """
@@ -245,37 +268,41 @@ class VectorStore:
         """
         os.makedirs(directory, exist_ok=True)
         
-        # Save index
-        faiss.write_index(self.index, os.path.join(directory, "index.faiss"))
-        
         # Save documents
+        import pickle
         with open(os.path.join(directory, "documents.pkl"), "wb") as f:
             pickle.dump(self.documents, f)
         
+        # Save embedding model name
+        with open(os.path.join(directory, "embedding_model.txt"), "w") as f:
+            f.write(self.embedding_model_name)
+        
+        # Note: If using PersistentClient, ChromaDB is already saved
         logger.info(f"Vector store saved to {directory}")
     
     @classmethod
-    def load(cls, directory: str, embedding_model_name: str = 'paraphrase-MiniLM-L6-v2') -> 'VectorStore':
+    def load(cls, directory: str) -> 'VectorStore':
         """
         Load vector store from disk.
         
         Args:
             directory: Directory to load from
-            embedding_model_name: Name of the sentence transformer model
             
         Returns:
             VectorStore instance
         """
-        vector_store = cls(embedding_model_name)
+        # Load embedding model name
+        with open(os.path.join(directory, "embedding_model.txt"), "r") as f:
+            embedding_model_name = f.read().strip()
         
-        # Load index
-        vector_store.index = faiss.read_index(os.path.join(directory, "index.faiss"))
+        # Create vector store with persistence
+        vector_store = cls(embedding_model_name=embedding_model_name, persist_directory=directory)
         
         # Load documents
         with open(os.path.join(directory, "documents.pkl"), "rb") as f:
             vector_store.documents = pickle.load(f)
         
-        logger.info(f"Vector store loaded from {directory} with {vector_store.index.ntotal} vectors")
+        logger.info(f"Vector store loaded from {directory} with {vector_store.collection.count()} vectors")
         return vector_store
     
     def similarity_search(self, query: str, k: int = 5) -> List[Dict]:
@@ -289,22 +316,28 @@ class VectorStore:
         Returns:
             List of document dictionaries with similarity scores
         """
-        # embed and normalize the query
-        query_embedding = self.model.encode([query], convert_to_numpy=True)
-        faiss.normalize_L2(query_embedding)
+        # Search in ChromaDB
+        results = self.collection.query(
+            query_texts=[query],
+            n_results=k
+        )
         
-        # Search
-        D, I = self.index.search(query_embedding.reshape(1, -1), k)
-        
-        # Get results
-        results = []
-        for i, (idx, score) in enumerate(zip(I[0], D[0])):
-            if idx != -1:  # -1 means no result found
+        # Process results
+        retrieved_docs = []
+        if results and results['documents'] and results['distances']:
+            for i, (doc_id, distance) in enumerate(zip(results['ids'][0], results['distances'][0])):
+                # Get document from stored documents
+                idx = int(doc_id)
                 doc = self.documents[idx].copy()  # Copy to avoid modifying original
-                doc["score"] = float(1 - score/2)  # Convert L2 distance to similarity score
-                results.append(doc)
+                
+                # Convert distance to similarity score (ChromaDB returns L2 distance or cosine distance)
+                # Normalize to 0-1 range where 1 is most similar
+                similarity_score = 1.0 - min(1.0, distance)
+                doc["score"] = float(similarity_score)
+                
+                retrieved_docs.append(doc)
         
-        return results
+        return retrieved_docs
 
 
 class RAGModel:
@@ -361,11 +394,11 @@ def build_joshua_project_rag(data_dir: str, output_dir: str = "jp_rag_model") ->
     dataframes = processor.load_data()
     documents = processor.create_documents()
     
-    # Create vector store
-    vector_store = VectorStore()
+    # Create vector store with persistence
+    vector_store = VectorStore(persist_directory=output_dir)
     vector_store.add_documents(documents)
     
-    # Save vector store
+    # Save vector store (documents and embedding model name)
     vector_store.save(output_dir)
     
     # Create RAG model
