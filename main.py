@@ -92,61 +92,182 @@ class JoshuaProjectDataProcessor:
     
     def create_documents(self) -> List[Dict]:
         """
-        Convert dataframes to Chroma-ready documents with enhanced summaries and metadata.
+        Convert dataframes to text documents for embedding with ChromaDB-optimized metadata.
         
         Returns:
-            List of document dictionaries
+            List of document dictionaries with metadata optimized for ChromaDB filtering
         """
-        logger.info("Creating documents for vector store...")
+        logger.info("Converting dataframes to documents with ChromaDB-optimized metadata...")
         documents = []
-
+        
         for key, df in self.dataframes.items():
-            logger.info(f"Processing: {key} ({len(df)} rows)")
+            logger.info(f"Processing {key}...")
+            
+            # Generate documents for each row
             for idx, row in df.iterrows():
-                fields = []
+                # Format row as text for embedding
+                text = f"Source: {key}\n"
+                
+                # Add all fields to text content
+                for col, value in row.items():
+                    if pd.notna(value):  # Skip NaN values
+                        text += f"{col}: {value}\n"
+                
+                # Initialize metadata with basic info
+                # ChromaDB supports filtering on metadata, so we want to be strategic
+                metadata = {
+                    "source_type": key,
+                    "row_id": str(idx)  # Convert to string for ChromaDB compatibility
+                }
+                
+                # For specific types of searches, add key fields as metadata
+                # This enables exact metadata filtering in ChromaDB queries
+                
+                # Country identifier fields
+                for field in ['Ctry', 'ROG3', 'ISO3']:
+                    if field in row and pd.notna(row[field]):
+                        metadata[field.lower()] = str(row[field])
+                
+                # People group identifier fields
+                for field in ['PeopNameInCountry', 'PeopName', 'PeopleID', 'ROP3']:
+                    if field in row and pd.notna(row[field]):
+                        # Normalize people group name fields for consistent filtering
+                        if field in ['PeopNameInCountry', 'PeopName']:
+                            metadata['people_group_name'] = str(row[field])
+                        else:
+                            metadata[field.lower()] = str(row[field])
+                
+                # Language identifier fields
+                for field in ['Language', 'ROL3']:
+                    if field in row and pd.notna(row[field]):
+                        if field == 'Language':
+                            metadata['language_name'] = str(row[field])
+                        else:
+                            metadata[field.lower()] = str(row[field])
+                
+                # Add religious affiliation fields as numeric values for range queries
+                # ChromaDB supports numeric filtering on these fields
+                religious_fields = [
+                    'PercentEvangelical', 'PercentChristian', 'PercentBuddhist', 
+                    'PercentHindu', 'PercentMuslim', 'PercentIslam',
+                    'PercentTraditional', 'PercentNonReligious'
+                ]
+                
+                for field in religious_fields:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            # Normalize field name for consistent querying
+                            clean_name = field.replace('Percent', '').lower() + '_pct'
+                            # Store as float for proper numeric filtering in ChromaDB
+                            metadata[clean_name] = float(row[field])
+                        except (ValueError, TypeError):
+                            # If conversion fails, store as string
+                            clean_name = field.replace('Percent', '').lower() + '_pct'
+                            metadata[clean_name] = str(row[field])
+                
+                # Add primary religion as string for exact matching
+                for field in ['PrimaryReligion', 'PrimaryReligionPGAC']:
+                    if field in row and pd.notna(row[field]):
+                        metadata['primary_religion'] = str(row[field])
+                        break  # Use first available
+                
+                # Add primary language as string for exact matching
+                for field in ['PrimaryLanguageName', 'PrimaryLanguagePGAC']:
+                    if field in row and pd.notna(row[field]):
+                        metadata['primary_language'] = str(row[field])
+                        break  # Use first available
+                
+                # Add population data for range queries
+                for field in ['Population', 'PopulationPGAC', 'PoplPeoples', 'LangPopulation']:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            # Standardize population field names for consistent filtering
+                            if field in ['Population', 'PopulationPGAC']:
+                                metadata['population'] = float(row[field])
+                            elif field == 'PoplPeoples':
+                                metadata['country_population'] = float(row[field])
+                            elif field == 'LangPopulation':
+                                metadata['language_population'] = float(row[field])
+                        except (ValueError, TypeError):
+                            # If conversion fails, store as string
+                            if field in ['Population', 'PopulationPGAC']:
+                                metadata['population'] = str(row[field])
+                            elif field == 'PoplPeoples':
+                                metadata['country_population'] = str(row[field])
+                            elif field == 'LangPopulation':
+                                metadata['language_population'] = str(row[field])
+                
+                # Add Bible translation status
+                if 'BibleStatus' in row and pd.notna(row['BibleStatus']):
+                    metadata['bible_status'] = str(row['BibleStatus'])
+                
+                # Build appropriate summary based on document type
                 summary = ""
-                metadata = {"source": key, "row_id": idx}
-
-                # Capture relevant raw fields
-                for col, val in row.items():
-                    if pd.notna(val):
-                        fields.append(f"{col}: {val}")
-                        if col in ["Ctry", "PeopNameInCountry", "PeopName", "Language", "PrimaryLanguageName"]:
-                            metadata[col] = str(val)
-
-                # Generate a contextual summary
-                if key == "countries":
-                    summary = (
-                        f"Country: {row.get('Ctry', 'Unknown')} has "
-                        f"{row.get('CntPeoples', 'an unknown number of')} people groups, "
-                        f"of which {row.get('CntPeoplesLR', 'N/A')} are least-reached. "
-                        f"Primary religion: {row.get('PrimaryReligion', 'N/A')}."
-                    )
-
-                elif key in ["peoples_in_country", "peoples_across"]:
-                    name = row.get("PeopNameInCountry") or row.get("PeopName") or "Unnamed group"
-                    summary = (
-                        f"People group: {name} in {row.get('Ctry', 'unknown location')} "
-                        f"has a population of {row.get('Population', 'N/A')} and "
-                        f"speaks {row.get('PrimaryLanguageName', 'N/A')}. "
-                        f"Religion: {row.get('PrimaryReligion', 'N/A')}."
-                    )
-
-                elif key == "languages":
-                    summary = (
-                        f"Language: {row.get('Language', 'N/A')}, "
-                        f"Bible status: {row.get('BibleStatus', 'N/A')}."
-                    )
-
-                # Combine into document text
-                doc_text = f"Source: {key}\nSummary: {summary}\n\n" + "\n".join(fields)
-
-                documents.append({
-                    "text": doc_text,
+                
+                # For countries
+                if key == 'countries' and 'Ctry' in row:
+                    summary = f"\nSummary: Information about {row['Ctry']}, a country with "
+                    if 'PoplPeoples' in row and pd.notna(row['PoplPeoples']):
+                        summary += f"population of {row['PoplPeoples']}. "
+                    if 'CntPeoples' in row and pd.notna(row['CntPeoples']):
+                        summary += f"It has {row['CntPeoples']} people groups. "
+                    if 'PrimaryReligion' in row and pd.notna(row['PrimaryReligion']):
+                        summary += f"The primary religion is {row['PrimaryReligion']}. "
+                    
+                    # Add religious percentages to summary for text search
+                    for field in religious_fields:
+                        if field in row and pd.notna(row[field]):
+                            religion_name = field.replace('Percent', '')
+                            summary += f"{religion_name}: {row[field]}%. "
+                
+                # For people groups
+                if key in ['peoples_in_country', 'peoples_across']:
+                    people_name = metadata.get('people_group_name', None)
+                    if people_name:
+                        summary = f"\nSummary: Information about {people_name}, "
+                        if 'Ctry' in row and pd.notna(row['Ctry']):
+                            summary += f"a people group in {row['Ctry']} "
+                        
+                        if 'population' in metadata:
+                            summary += f"with population of {metadata['population']}. "
+                        
+                        if 'primary_language' in metadata:
+                            summary += f"Their primary language is {metadata['primary_language']}. "
+                        
+                        if 'primary_religion' in metadata:
+                            summary += f"Their primary religion is {metadata['primary_religion']}. "
+                        
+                        # Add detailed religious percentages to summary for better text matching
+                        for field in religious_fields:
+                            if field in row and pd.notna(row[field]):
+                                religion_name = field.replace('Percent', '')
+                                summary += f"{religion_name}: {row[field]}%. "
+                
+                # For languages
+                if key == 'languages' and 'language_name' in metadata:
+                    summary = f"\nSummary: Information about the {metadata['language_name']} language. "
+                    
+                    if 'bible_status' in metadata:
+                        summary += f"Bible translation status: {metadata['bible_status']}. "
+                    
+                    if 'LangFamily' in row and pd.notna(row['LangFamily']):
+                        summary += f"Language family: {row['LangFamily']}. "
+                    
+                    if 'language_population' in metadata:
+                        summary += f"Number of speakers: {metadata['language_population']}. "
+                
+                # Add summary to the text
+                text += summary
+                
+                # Create document object with optimized metadata for ChromaDB
+                doc = {
+                    "text": text,
                     "metadata": metadata
-                })
-
-        logger.info(f"Created {len(documents)} documents.")
+                }
+                
+                documents.append(doc)
+        
+        logger.info(f"Created {len(documents)} documents with ChromaDB-optimized metadata")
         return documents
 
 class VectorStore:
