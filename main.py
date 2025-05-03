@@ -92,102 +92,62 @@ class JoshuaProjectDataProcessor:
     
     def create_documents(self) -> List[Dict]:
         """
-        Convert dataframes to text documents for embedding.
+        Convert dataframes to Chroma-ready documents with enhanced summaries and metadata.
         
         Returns:
             List of document dictionaries
         """
-        logger.info("Converting dataframes to documents...")
+        logger.info("Creating documents for vector store...")
         documents = []
-        
-        for key, df in self.dataframes.items():
-            logger.info(f"Processing {key}...")
-            
-            # Generate documents for each row
-            for idx, row in df.iterrows():
-                # Format row as text
-                text = f"Source: {key}\n"
-                
-                # Add all fields
-                for col, value in row.items():
-                    if pd.notna(value):  # Skip NaN values
-                        text += f"{col}: {value}\n"
-                
-                # For countries, add a summary
-                if key == 'countries' and 'Ctry' in row:
-                    text += f"\nSummary: Information about {row['Ctry']}, a country with "
-                    if 'PoplPeoples' in row and pd.notna(row['PoplPeoples']):
-                        text += f"population of {row['PoplPeoples']}. "
-                    if 'CntPeoples' in row and pd.notna(row['CntPeoples']):
-                        text += f"It has {row['CntPeoples']} people groups. "
-                    if 'PrimaryReligion' in row and pd.notna(row['PrimaryReligion']):
-                        text += f"The primary religion is {row['PrimaryReligion']}."
-                
-                # For people groups, add a summary
-                if key in ['peoples_in_country', 'peoples_across']:
-                    people_name = None
-                    if 'PeopNameInCountry' in row and pd.notna(row['PeopNameInCountry']):
-                        people_name = row['PeopNameInCountry']
-                    elif 'PeopName' in row and pd.notna(row['PeopName']):
-                        people_name = row['PeopName']
-                    
-                    if people_name:
-                        text += f"\nSummary: Information about {people_name}, "
-                        if 'Ctry' in row and pd.notna(row['Ctry']):
-                            text += f"a people group in {row['Ctry']} "
-                        
-                        population = None
-                        if 'Population' in row and pd.notna(row['Population']):
-                            population = row['Population']
-                        elif 'PopulationPGAC' in row and pd.notna(row['PopulationPGAC']):
-                            population = row['PopulationPGAC']
-                        
-                        if population:
-                            text += f"with population of {population}. "
-                        
-                        language = None
-                        if 'PrimaryLanguageName' in row and pd.notna(row['PrimaryLanguageName']):
-                            language = row['PrimaryLanguageName']
-                        elif 'PrimaryLanguagePGAC' in row and pd.notna(row['PrimaryLanguagePGAC']):
-                            language = row['PrimaryLanguagePGAC']
-                        
-                        if language:
-                            text += f"Their primary language is {language}. "
-                        
-                        religion = None
-                        if 'PrimaryReligion' in row and pd.notna(row['PrimaryReligion']):
-                            religion = row['PrimaryReligion']
-                        elif 'PrimaryReligionPGAC' in row and pd.notna(row['PrimaryReligionPGAC']):
-                            religion = row['PrimaryReligionPGAC']
-                        
-                        if religion:
-                            text += f"Their primary religion is {religion}."
-                
-                # For languages, add a summary
-                if key == 'languages' and 'Language' in row:
-                    text += f"\nSummary: Information about the {row['Language']} language. "
-                    if 'BibleStatus' in row and pd.notna(row['BibleStatus']):
-                        text += f"Bible translation status: {row['BibleStatus']}. "
-                
-                # Create document object
-                doc = {
-                    "text": text,
-                    "metadata": {
-                        "source": key,
-                        "row_id": idx
-                    }
-                }
-                
-                # Add specific metadata fields if they exist
-                for field in ['Ctry', 'ROG3', 'PeopNameInCountry', 'Language', 'PeopName']:
-                    if field in row and pd.notna(row[field]):
-                        doc["metadata"][field] = row[field]
-                
-                documents.append(doc)
-        
-        logger.info(f"Created {len(documents)} documents")
-        return documents
 
+        for key, df in self.dataframes.items():
+            logger.info(f"Processing: {key} ({len(df)} rows)")
+            for idx, row in df.iterrows():
+                fields = []
+                summary = ""
+                metadata = {"source": key, "row_id": idx}
+
+                # Capture relevant raw fields
+                for col, val in row.items():
+                    if pd.notna(val):
+                        fields.append(f"{col}: {val}")
+                        if col in ["Ctry", "PeopNameInCountry", "PeopName", "Language", "PrimaryLanguageName"]:
+                            metadata[col] = str(val)
+
+                # Generate a contextual summary
+                if key == "countries":
+                    summary = (
+                        f"Country: {row.get('Ctry', 'Unknown')} has "
+                        f"{row.get('CntPeoples', 'an unknown number of')} people groups, "
+                        f"of which {row.get('CntPeoplesLR', 'N/A')} are least-reached. "
+                        f"Primary religion: {row.get('PrimaryReligion', 'N/A')}."
+                    )
+
+                elif key in ["peoples_in_country", "peoples_across"]:
+                    name = row.get("PeopNameInCountry") or row.get("PeopName") or "Unnamed group"
+                    summary = (
+                        f"People group: {name} in {row.get('Ctry', 'unknown location')} "
+                        f"has a population of {row.get('Population', 'N/A')} and "
+                        f"speaks {row.get('PrimaryLanguageName', 'N/A')}. "
+                        f"Religion: {row.get('PrimaryReligion', 'N/A')}."
+                    )
+
+                elif key == "languages":
+                    summary = (
+                        f"Language: {row.get('Language', 'N/A')}, "
+                        f"Bible status: {row.get('BibleStatus', 'N/A')}."
+                    )
+
+                # Combine into document text
+                doc_text = f"Source: {key}\nSummary: {summary}\n\n" + "\n".join(fields)
+
+                documents.append({
+                    "text": doc_text,
+                    "metadata": metadata
+                })
+
+        logger.info(f"Created {len(documents)} documents.")
+        return documents
 
 class VectorStore:
     """Vector store for document embeddings using ChromaDB."""
