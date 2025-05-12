@@ -1,29 +1,25 @@
-import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
+import pandas as pd
+import mysql.connector
 
-# Load environment variables from .env file
-load_dotenv()
+from sqlalchemy import create_engine
+import pandas as pd
 
-# Example usage
-file_path = 'data/AllLanguageListing.csv'
-number_of_rows = get_number_of_rows(file_path)
-print(f"Number of rows in {file_path}: {number_of_rows}")
+engine = create_engine("mysql+mysqlconnector://root:jay0912@localhost/joshuaproject")
 
+# Load data from the table
+df = pd.read_sql("SELECT * FROM jppeoples", engine)
 
-# Retrieve Supabase URL and Key from environment variables
-url = os.getenv("SUPABASE_URL")
-key = os.getenv("SUPABASE_KEY")
+# Check the primary key
+primary_key_query = """
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'joshuaproject'
+    AND TABLE_NAME = 'jppeoples'
+    AND COLUMN_KEY = 'PRI'
+"""
+primary_key_df = pd.read_sql(primary_key_query, engine)
+print("Primary Key(s):", primary_key_df['COLUMN_NAME'].tolist())
 
-print(url)
-
-# Initialize Supabase client
-supabase: Client = create_client(url, key)
-
-# Query the "LanguageListing" table
-response = (supabase.table("LanguageListing").select("*").execute())
-
-# Check if the query was successful
-print(len(response.data))
-
-
+# Show sample
+print(df.head())
+print(f"Total rows: {len(df)}")
