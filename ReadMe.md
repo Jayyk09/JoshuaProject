@@ -1,68 +1,55 @@
 # Joshua Project RAG Based Bot
 
-## Datasets Information
----
+## Overview
 
-**Database:** Joshua Project People Group Data  
-**File:** AllLanguageListing.csv  
-- **Rows:** 7148  
-- **Columns:** 14  
-- **Column names:** `['ROL3', 'Language', 'NbrPGICs', 'JPScale', 'LeastReached', 'BibleStatus', 'BibleYear', 'NTYear', 'PortionsYear', 'JF', 'AudioRecordings', 'YouVersion_ID', 'RLG3', 'PrimaryReligion']`
+The Joshua Project RAG Based Bot is designed to interact with a comprehensive database of people groups worldwide, providing insights and data-driven answers to queries about these groups. The bot leverages OpenAI's capabilities to convert natural language questions into SQL queries, facilitating easy access to the database.
 
----
+## Key Features
 
-**Database:** Joshua Project People Group Data  
-**File:** PeopleCtryLangListing.csv  
-- **Rows:** 46490  
-- **Columns:** 8  
-- **Column names:** `['PeopleID3', 'ROG3', 'ROL3', 'ROL4', 'Language', 'LanguageDialect', 'LanguageRank', 'Speakers']`
+- **Database Interaction**: Utilizes SQLAlchemy to connect and interact with a MySQL database containing detailed information about people groups.
+- **Entity Caching**: Caches common entities such as people groups, countries, languages, and religions for efficient fuzzy matching.
+- **Fuzzy Matching**: Implements simple fuzzy matching to handle variations in entity names, improving query accuracy.
+- **Schema Description**: Automatically generates a description of the database schema to assist in query formulation.
+- **Preprocessing**: Preprocesses user questions to identify potential entities and improve query generation.
+- **OpenAI Integration**: Uses OpenAI to generate SQL queries from user questions, leveraging conversation history for context.
 
----
+## How It Works
 
-**Database:** Type,PEID,ROP3,PeopleID3,ROG3,Ctry,JPPeopleGroup,JPPopulation,JPIndigenous,JPROL3,JPPrimaryLanguage,JPRLG3,JPPrimaryReligion,JPScale,JPLeastReached,JP%ChristianAdherent,JP%Evangelical,CPPIPeopleGroup, CPPIPopulation ,CPPIROL,CPPIPrimaryLanguage,CPPIPrimaryReligion,CPPIGSEC,CPPIEvangelicalEngagement  
-**File:** jp-cppi-cross-reference.csv  
-- **Rows:** 19373  
-- **Columns:** 24  
-- **Column names:** `['1', '23947', '100096', '19409', 'AF', 'Afghanistan', 'Afshari', '16000', 'N', 'azb', 'Azerbaijani, South', '6', 'Islam', '1.1', 'Y', '0.04', '0.04.1', 'Afshari.1', ' 13,500 ', 'azb.1', 'South Azerbaijani', 'Islam - Sunni', '1.2', 'Unengaged']`
+1. **Initialization**: The bot initializes by connecting to the database and caching common entities for fuzzy matching.
+2. **Schema Description**: Retrieves and formats the database schema to provide context for query generation.
+3. **Question Processing**: Preprocesses user questions to identify potential entities and uses OpenAI to generate SQL queries.
+4. **Query Execution**: Executes the generated SQL queries against the database to retrieve and return relevant data.
 
----
+## Usage
 
-**Database:** Joshua Project People Group Data  
-**File:** AllCountriesListing.csv  
-- **Rows:** 253  
-- **Columns:** 23  
-- **Column names:** `['ROG3', 'ISO3', 'ISO2', 'Ctry', 'PoplPeoples', 'CntPeoples', 'CntPeoplesLR', 'PoplPeoplesLR', 'JPScaleCtry', 'ROL3OfficialLanguage', 'OfficialLang', 'RLG3Primary', 'ReligionPrimary', 'PercentChristianity', 'PercentEvangelical', '10_40Window', 'ROG2', 'Continent', 'RegionCode', 'RegionName', 'PercentUrbanized', 'LiteracyRate', 'WorkersNeeded']`
+To use the Joshua Project RAG Based Bot, ensure you have the necessary environment variables set up, including the OpenAI API key. The bot can be run from the command line, where it will prompt for questions and return data-driven answers based on the database content.
 
----
+## Requirements
 
-**Database:** Joshua Project People Group Data  
-**File:** AllPeoplesAcrossCountries.csv  
-- **Rows:** 10379  
-- **Columns:** 25  
-- **Column names:** `['PeopleID3', 'PeopName', 'PeopleID1', 'AffinityBloc', 'PeopleID2', 'PeopleCluster', 'ROP3', 'ROP25', 'ROP25Name', 'JPScalePGAC', 'PopulationPGAC', 'LeastReachedPGAC', 'FrontierPGAC', 'CntPGIC', 'CntUPG', 'CntFPG', 'ROG3Largest', 'CtryLargest', 'ROL3PGAC', 'PrimaryLanguagePGAC', 'RLG3PGAC', 'PrimaryReligionPGAC', 'PercentChristianPGAC', 'PercentEvangelicalPGAC', 'PeopleID3General']`
+- Python 3.x
+- Pandas
+- SQLAlchemy
+- OpenAI Python Client
+- dotenv
 
----
+## Setup
 
-**Database:** Joshua Project People Group Data  
-**File:** FieldDefinitions.csv  
-- **Rows:** 247  
-- **Columns:** 4  
-- **Column names:** `['TableName', 'FieldName', 'FieldDescription', 'FieldType']`
+1. Clone the repository.
+2. Install the required Python packages.
+3. Set up the `.env` file with your OpenAI API key and database connection details.
+4. Run the `main.py` script to start interacting with the bot.
 
----
+## Datasets
 
-**Database:** Joshua Project People Group Data  
-**File:** UnreachedPeoplesByCountry.csv  
-- **Rows:** 7259  
-- **Columns:** 33  
-- **Column names:** `['ROG3', 'Ctry', 'PeopleID3', 'ROP3', 'PeopNameAcrossCountries', 'PeopNameInCountry', 'Population', 'JPScale', 'LeastReached', 'ROL3', 'PrimaryLanguageName', 'BibleStatus', 'RLG3', 'PrimaryReligion', 'PercentAdherents', 'PercentEvangelical', 'PeopleID1', 'ROP1', 'AffinityBloc', 'PeopleID2', 'ROP2', 'PeopleCluster', 'CountOfCountries', 'RegionCode', 'RegionName', 'ROG2', 'Continent', '10_40Window', 'IndigenousCode', 'WorkersNeeded', 'Frontier', 'Latitude', 'Longitude']`
+The bot interacts with several datasets, each containing specific information about people groups, languages, countries, and more. These datasets are stored in CSV files and are loaded into the database for querying.
 
----
+- **AllLanguageListing.csv**: Contains language-related data.
+- **PeopleCtryLangListing.csv**: Details people groups by country and language.
+- **jp-cppi-cross-reference.csv**: Cross-references various identifiers and attributes.
+- **AllCountriesListing.csv**: Provides country-specific data.
+- **AllPeoplesAcrossCountries.csv**: Lists people groups across different countries.
+- **FieldDefinitions.csv**: Describes the fields in the database.
+- **UnreachedPeoplesByCountry.csv**: Focuses on unreached people groups by country.
+- **AllPeoplesInCountry.csv**: Details all people groups within a country.
 
-**Database:** Joshua Project People Group Data  
-**File:** AllPeoplesInCountry.csv  
-- **Rows:** 17366  
-- **Columns:** 33  
-- **Column names:** `['ROG3', 'Ctry', 'PeopleID3', 'ROP3', 'PeopNameAcrossCountries', 'PeopNameInCountry', 'Population', 'JPScale', 'LeastReached', 'ROL3', 'PrimaryLanguageName', 'BibleStatus', 'RLG3', 'PrimaryReligion', 'PercentAdherents', 'PercentEvangelical', 'PeopleID1', 'ROP1', 'AffinityBloc', 'PeopleID2', 'ROP2', 'PeopleCluster', 'CountOfCountries', 'RegionCode', 'RegionName', 'ROG2', 'Continent', '10_40Window', 'IndigenousCode', 'WorkersNeeded', 'Frontier', 'Latitude', 'Longitude']`
-
----
+For more detailed information about each dataset, refer to the database schema and the CSV files provided in the repository.
