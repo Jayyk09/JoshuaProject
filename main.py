@@ -5,6 +5,7 @@ import os
 from openai import OpenAI
 import time
 import re
+from utils.prompt import prompt
 
 load_dotenv()
 
@@ -14,64 +15,8 @@ class DatabaseChatbot:
     def __init__(self, connection_string="mysql+mysqlconnector://root:jay0912@localhost/joshuaproject"):
         self.engine = create_engine(connection_string)
         self.schema_description = self.get_schema_description()
-        self.conversation_history = []
-        # Store commonly used entities for fuzzy matching
-        self.cached_entities = {}
-        self.initialize_entity_cache()
-        
-    def initialize_entity_cache(self):
-        """Cache common entities from the database for fuzzy matching"""
-        try:
-            # Cache people groups
-            people_groups = pd.read_sql("SELECT DISTINCT PeopNameInCountry FROM jppeoples", self.engine)
-            self.cached_entities["people_groups"] = people_groups["PeopNameInCountry"].dropna().tolist()
+        self.messages = []
             
-            # Cache countries
-            countries = pd.read_sql("SELECT DISTINCT Ctry FROM jppeoples", self.engine)
-            self.cached_entities["countries"] = countries["Ctry"].dropna().tolist()
-            
-            # Cache languages
-            languages = pd.read_sql("SELECT DISTINCT PrimaryLanguageName FROM jppeoples", self.engine)
-            self.cached_entities["languages"] = languages["PrimaryLanguageName"].dropna().tolist()
-            
-            # Cache religions
-            religions = pd.read_sql("SELECT DISTINCT PrimaryReligion FROM jppeoples", self.engine)
-            self.cached_entities["religions"] = religions["PrimaryReligion"].dropna().tolist()
-            
-            print(f"Cached {len(self.cached_entities['people_groups'])} people groups, "
-                  f"{len(self.cached_entities['countries'])} countries, "
-                  f"{len(self.cached_entities['languages'])} languages, and "
-                  f"{len(self.cached_entities['religions'])} religions for fuzzy matching.")
-        except Exception as e:
-            print(f"Warning: Could not initialize entity cache: {e}")
-
-    def get_schema_description(self):
-        """Get a description of the database schema to help OpenAI understand it better."""
-        try:
-            # Get column information
-            columns_df = pd.read_sql("SHOW COLUMNS FROM jppeoples", self.engine)
-            
-            # Get a sample of data to understand types better
-            sample_df = pd.read_sql("SELECT * FROM jppeoples LIMIT 3", self.engine)
-            
-            # Create schema description
-            description = "Database Schema for jppeoples table:\n"
-            for _, row in columns_df.iterrows():
-                col_name = row['Field']
-                col_type = row['Type']
-                example_val = "NULL"
-                
-                if col_name in sample_df.columns:
-                    sample_val = sample_df[col_name].iloc[0]
-                    if pd.notna(sample_val):
-                        example_val = f"{sample_val} (Example)"
-                
-                description += f"- {col_name}: {col_type}, Example: {example_val}\n"
-                
-            return description
-        except Exception as e:
-            print(f"Error getting schema: {e}")
-            return "Could not retrieve schema information."
 
     def extract_sql_query(self, text):
         """Extract clean SQL query from the OpenAI response, removing any prefixes/code blocks."""
@@ -88,101 +33,20 @@ class DatabaseChatbot:
             return matches[0].strip()
         
         return text.strip()
-    
-    def find_fuzzy_matches(self, term, entity_type):
-        """Find possible fuzzy matches for a term in the cached entities"""
-        if entity_type not in self.cached_entities:
-            return []
-            
-        matches = []
-        term_lower = term.lower()
         
-        # Check for exact match first
-        for entity in self.cached_entities[entity_type]:
-            if entity and term_lower == entity.lower():
-                return [entity]  # Return exact match immediately
-        
-        # Simple fuzzy matching (contains or is contained by)
-        for entity in self.cached_entities[entity_type]:
-            if not entity:
-                continue
-                
-            entity_lower = entity.lower()
-            # Check if term is contained in entity or entity is contained in term
-            if (term_lower in entity_lower or 
-                entity_lower in term_lower or
-                # Remove trailing 's' for plurals
-                (term_lower.endswith('s') and term_lower[:-1] == entity_lower) or
-                # Add trailing 's' for singular to plural
-                (term_lower + 's' == entity_lower)):
-                matches.append(entity)
-                
-        return matches[:5]  # Limit to top 5 matches
-        
-    def preprocess_question(self, question):
-        """Pre-process question to handle entity mismatches"""
-        # Extract potential entities from the question
-        # This is a simple approach - in production you'd use NER
-        words = re.findall(r'\b\w+\b', question)
-        
-        replacements = {}
-        entity_types = ["people_groups", "countries", "languages", "religions"]
-        
-        for word in words:
-            if len(word) < 4:  # Skip short words
-                continue
-                
-            for entity_type in entity_types:
-                matches = self.find_fuzzy_matches(word, entity_type)
-                if matches:
-                    replacements[word] = {
-                        "matches": matches,
-                        "entity_type": entity_type
-                    }
-                    break
-        
-        # Add fuzzy match info to the question context
-        preprocessed = {
-            "original_question": question,
-            "potential_entities": replacements
-        }
-        
-        return preprocessed
 
     def answer_question(self, question):
-        """Answer a question about the database using conversation history for context"""
-        # Pre-process question for fuzzy matching
-        preprocessed = self.preprocess_question(question)
-        
+        """Answer a question about the database using conversation history for context"""        
         # Add the new question to conversation history
-        self.conversation_history.append({"role": "user", "content": question})
+        self.messages.append({"role": "user", "content": question})
         
         # Step 1: Generate SQL query using OpenAI with conversation context
         try:
             # Prepare conversation context for SQL generation
-            messages = [
-                {"role": "system", "content": f"""You are a helpful SQL assistant. Your task is to convert a question about a database into a valid SQL query.
-The database has a table called 'jppeoples' with information about people groups worldwide. 
-
-Here is the schema information:
-{self.schema_description}
-
-Return ONLY the SQL query with no explanations, prefixes, or code formatting. 
-Do not include the word 'sql' at the beginning of your response. 
-Just return a valid SQL query that can be executed directly.
-
-IMPORTANT: For fuzzy matching, use LIKE or similar operators. 
-If the question mentions an entity that might not match exactly in the database, use pattern matching.
-For example:
-- Use '%Brahmin%' instead of 'Brahmin'
-- Use '%Christian%' instead of 'Christian'
-
-The user's question might contain entities that need fuzzy matching. Here are potential entities found:
-{str(preprocessed['potential_entities'])}"""}
-            ]
+            messages = prompt 
             
             # Add relevant conversation history (last 3 exchanges)
-            for msg in self.conversation_history[-6:]:
+            for msg in self.messages[-6:]:
                 messages.append(msg)
                 
             # Add the current question with entity information
@@ -198,11 +62,11 @@ The user's question might contain entities that need fuzzy matching. Here are po
             print(f"Generated SQL: {sql_query}")
             
             # Add SQL query to conversation for context
-            self.conversation_history.append({"role": "assistant", "content": f"SQL: {sql_query}"})
+            self.messages.append({"role": "assistant", "content": f"SQL: {sql_query}"})
             
         except Exception as e:
             error_msg = f"Error generating SQL query: {str(e)}"
-            self.conversation_history.append({"role": "assistant", "content": error_msg})
+            self.messages.append({"role": "assistant", "content": error_msg})
             return error_msg
         
         # Step 2: Execute the SQL query
@@ -213,9 +77,34 @@ The user's question might contain entities that need fuzzy matching. Here are po
             
             # Handle empty results
             if len(results_df) == 0:
-                no_results_msg = "No matching data found in the database for your query."
-                self.conversation_history.append({"role": "assistant", "content": no_results_msg})
-                return no_results_msg
+                # Try a more general query based on geography
+                for word, info in preprocessed["potential_entities"].items():
+                    if info["entity_type"] == "geographic":
+                        matches = info["matches"]
+                        if isinstance(matches, list) and len(matches) > 0:
+                            # Try to query using the first geographic match
+                            location = matches[0]
+                            fallback_query = f"""
+                            SELECT PeopNameInCountry, Ctry, Population, PrimaryLanguageName, PrimaryReligion 
+                            FROM jppeoples 
+                            WHERE Ctry LIKE '%{location}%' OR ROG3 LIKE '%{location}%'
+                            LIMIT 10
+                            """
+                            try:
+                                fallback_df = pd.read_sql(fallback_query, self.engine)
+                                if not fallback_df.empty:
+                                    print(f"Fallback query found {len(fallback_df)} results")
+                                    # Use the fallback results
+                                    results_df = fallback_df
+                                    break
+                            except Exception as fallback_e:
+                                print(f"Fallback query error: {fallback_e}")
+                
+                # If still no results, return no results message
+                if len(results_df) == 0:
+                    no_results_msg = "No matching data found in the database for your query."
+                    self.conversation_history.append({"role": "assistant", "content": no_results_msg})
+                    return no_results_msg
             
             # Convert to string with limited rows if large
             if len(results_df) > 10:
@@ -476,79 +365,3 @@ def run_interactive_mode():
         if len(chatbot.conversation_history) >= 6 and len(chatbot.conversation_history) % 2 == 0:
             print(f"\nConversation context: {chatbot.get_conversation_summary()}")
 
-def run_demo_mode():
-    """Run a demonstration with predefined questions."""
-    engine = create_engine("mysql+mysqlconnector://root:jay0912@localhost/joshuaproject")
-    
-    # Get schema info once at the beginning
-    print("Analyzing database schema...")
-    schema_description = get_schema_description(engine)
-    
-    # Show database schema
-    print("Database Schema Summary:")
-    columns_df = pd.read_sql("SHOW COLUMNS FROM jppeoples", engine)
-    print(columns_df)
-    
-    # Demonstrate the function with sample questions
-    sample_questions = [
-        "What are the top 5 largest people groups by population?",
-        "Which countries have the highest percentage of evangelical Christians?",
-        "How many people groups are classified as 'Least Reached'?",
-        "What is the distribution of primary religions across all people groups?"
-    ]
-    
-    print("\n" + "="*50)
-    print("DEMONSTRATING DATABASE Q&A FUNCTION")
-    print("="*50)
-    
-    for i, question in enumerate(sample_questions, 1):
-        print(f"\nQuestion {i}: {question}")
-        print("-" * 40)
-        answer = answer_database_question(question, engine, schema_description)
-        print(f"Answer: {answer}")
-        print("="*50)
-
-def run_chatbot_demo():
-    """Run a demonstration of the conversational chatbot with predefined questions."""
-    print("\nInitializing Database Chatbot...")
-    chatbot = DatabaseChatbot()
-    
-    # Demonstrate the chatbot with sample conversation
-    sample_conversation = [
-        "What are the top 5 largest people groups by population?",
-        "Which of these are least reached?",
-        "Tell me about Brahmins in India.",
-        "What languages do they speak?",
-        "How many people groups practice Hinduism?",
-        "What is the percentage of evangelical Christians among these groups?"
-    ]
-    
-    print("\n" + "="*50)
-    print("DEMONSTRATING CONVERSATIONAL DATABASE CHATBOT")
-    print("="*50)
-    
-    for i, question in enumerate(sample_conversation, 1):
-        print(f"\nQuestion {i}: {question}")
-        print("-" * 40)
-        answer = chatbot.answer_question(question)
-        print(f"Answer: {answer}")
-        print("="*50)
-        
-        # Show conversation context after a few exchanges
-        if i >= 3:
-            print(f"\nConversation context: {chatbot.get_conversation_summary()}")
-
-if __name__ == "__main__":
-    # Use command line args to control mode
-    import sys
-    
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--demo":
-            run_demo_mode()
-        elif sys.argv[1] == "--chatbot-demo":
-            run_chatbot_demo()
-        else:
-            print(f"Unknown option: {sys.argv[1]}")
-            print("Available options: --demo, --chatbot-demo")
-    else:
-        run_interactive_mode()
