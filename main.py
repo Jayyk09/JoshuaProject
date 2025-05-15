@@ -2,14 +2,14 @@ import pandas as pd
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import os
-import time # Keep for potential future use (e.g., rate limiting)
-import re   # Keep for potential future use (e.g., sanitizing output)
-
+import time  # Keep for potential future use (e.g., rate limiting)
+import re    # Keep for potential future use (e.g., sanitizing output)
 # LangChain specific imports
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
-from langchain_community.agent_toolkits import create_sql_agent # High-level agent constructor
+from langchain_community.agent_toolkits import create_sql_agent  # High-level agent constructor
+from langchain.memory import ConversationBufferMemory
 
 load_dotenv()
 
@@ -40,8 +40,7 @@ class DatabaseChatbot:
         self.db = SQLDatabase(self.engine)
 
         # 2. Initialize an LLM
-        self.llm = ChatOpenAI(temperature=0, model="gpt-o4-mini", api_key=openai_api_key)
-
+        self.llm = ChatOpenAI(temperature=0, model="gpt-4o", api_key=openai_api_key)
 
         # 3. Create the SQLDatabaseToolkit
         # The toolkit provides tools to the agent: sql_db_query, sql_db_schema, etc.
@@ -53,33 +52,32 @@ class DatabaseChatbot:
         # You can customize the agent_type (e.g., "openai-tools", "openai-functions", "zero-shot-react-description")
         # The dialect is important for the LLM to generate correct SQL.
         db_dialect = self.engine.dialect.name
-        # print(f"Database dialect: {db_dialect}") # For debugging
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-        # Example of how you might use your custom prompt (if 'prompt' is a string template)
-        # custom_prompt_prefix = ""
-        # if 'prompt' in globals() and isinstance(prompt, str): # Check if your prompt variable exists
-        #     custom_prompt_prefix = prompt.format(dialect=db_dialect) # Assuming your prompt takes dialect
-        # else:
-        #     # Using a generic prefix if your prompt is not available/suitable
-        #     custom_prompt_prefix = f"You are an agent designed to interact with a {db_dialect} database."
-        #     custom_prompt_prefix += " Given an input question, create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer.\n"
-        #     custom_prompt_prefix += "Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 5 results.\n"
-        #     custom_prompt_prefix += "You can order the results by a relevant column to return the most interesting examples in the database.\n"
-        #     custom_prompt_prefix += "Never query for all the columns from a specific table, only ask for the relevant columns given the question.\n"
-        #     custom_prompt_prefix += "You have access to tools for interacting with the database.\n"
-        #     custom_prompt_prefix += "Only use the given tools. Only use the information returned by the tools to construct your final answer.\n"
-        #     custom_prompt_prefix += "You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.\n"
-        #     custom_prompt_prefix += "DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.\n"
-        #     custom_prompt_prefix += "If the question does not seem related to the database, just return \"I don't know\" as the answer."
 
+        # Custom prompt to use LIKE for queries involving people names in countries
+        custom_prompt_prefix = (
+            f"You are an agent designed to interact with a {db_dialect} database. "
+            "When asked about people names in a specific country, use the SQL LIKE operator to match patterns. "
+            "Given an input question, create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer.\n"
+            "Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 5 results.\n"
+            "You can order the results by a relevant column to return the most interesting examples in the database.\n"
+            "Never query for all the columns from a specific table, only ask for the relevant columns given the question.\n"
+            "You have access to tools for interacting with the database.\n"
+            "Only use the given tools. Only use the information returned by the tools to construct your final answer.\n"
+            "You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.\n"
+            "DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.\n"
+            "If the question does not seem related to the database, just return \"I don't know\" as the answer."
+        )
 
         self.agent_executor = create_sql_agent(
             llm=self.llm,
             toolkit=self.toolkit,
-            verbose=True, # Set to True to see the agent's thought process
-            agent_type="openai-tools", # "openai-tools" is generally recommended for newer OpenAI models
-            # prefix=custom_prompt_prefix, # You can pass a custom prefix if needed
-            handle_parsing_errors=True # Handles errors if LLM output is not valid tool call
+            verbose=True,  # Set to True to see the agent's thought process
+            agent_type="openai-tools",  # "openai-tools" is generally recommended for newer OpenAI models
+            prefix=custom_prompt_prefix,  # Use the custom prompt
+            handle_parsing_errors=True,  # Handles errors if LLM output is not valid tool call
+            memory=self.memory
         )
         print("DatabaseChatbot initialized successfully with agent.")
 
@@ -139,17 +137,16 @@ if __name__ == "__main__":
         tables = chatbot.list_tables()
         print(tables)
 
-        if tables: # Proceed only if tables are found
-            print(f"\n--- Schema for table '{tables[0]}' ---") # Get schema for the first table
+        if tables:  # Proceed only if tables are found
+            print(f"\n--- Schema for table '{tables[0]}' ---")  # Get schema for the first table
             # schema = chatbot.get_db_schema(tables=tables[0]) # If only one table
-            schema = chatbot.get_db_schema() # Get schema for all tables
+            schema = chatbot.get_db_schema()  # Get schema for all tables
             print(schema)
 
             print("\n--- Chatting with the Database ---")
             query1 = "what percentage of chinese are evangelical Christian?"
             answer1 = chatbot.chat(query1)
             print(f"\nQ: {query1}\nA: {answer1}")
-
 
         else:
             print("No tables found in the database. Cannot proceed with chat examples.")
