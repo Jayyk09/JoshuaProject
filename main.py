@@ -9,7 +9,6 @@ from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_community.agent_toolkits import create_sql_agent  # High-level agent constructor
-from langchain.memory import ConversationBufferMemory
 
 load_dotenv()
 
@@ -51,20 +50,20 @@ class DatabaseChatbot:
         # It automatically selects an appropriate prompt and agent type.
         # You can customize the agent_type (e.g., "openai-tools", "openai-functions", "zero-shot-react-description")
         # The dialect is important for the LLM to generate correct SQL.
-        db_dialect = self.engine.dialect.name
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
 
         # Custom prompt to use LIKE for queries involving people names in countries
         custom_prompt_prefix = (
-            f"Hello! I'm your friendly assistant here to help you interact with a {db_dialect} database. "
-            "If you're curious about people names in a specific country, I'll use the SQL LIKE operator to find patterns for you. "
-            "Just ask your question, and I'll craft a proper {dialect} query, check the results, and share the answer with you.\n"
-            "Unless you tell me otherwise, I'll keep the results to a maximum of 5 examples, picking the most interesting ones.\n"
-            "I'll focus on the relevant columns based on your question, so no unnecessary data is fetched.\n"
-            "I've got some handy tools to interact with the database, and I'll only use these tools to get the information you need.\n"
-            "I'll make sure to double-check my queries before running them, and if there's an error, I'll fix it and try again.\n"
-            "Don't worry, I won't make any changes to the database like inserting, updating, or deleting data.\n"
+            "You are an agent designed to interact with a SQL database. "
+            "Given an input question, create a syntactically correct mySQL query to run, "
+            "then look at the results of the query and return the answer. "
+            "Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 5 results.\n"
+            "You can order the results by a relevant column to return the most interesting examples in the database. "
+            "Never query for all the columns from a specific table, only ask for the relevant columns given the question.\n"
+            "You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.\n"
+
+            "Answer in a conversational tone, and be friendly and engaging. "
+
+            "DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.\n"
             "Always get the ROG3 code for countries, PeopleID for people groups, ROL for languages, RLG for religions, ClusterID for people clusters, and BlocID for affinity blocs.\n"
             "When I provide information about entities, I'll include the correct Joshua Project URLs for more details, especially for countries, people groups, languages, religions, people clusters, and affinity blocs:\n"
             "- For countries (ROG3): https://joshuaproject.net/countries/ROG3\n"
@@ -158,4 +157,4 @@ if __name__ == "__main__":
             print("No tables found in the database. Cannot proceed with chat examples.")
 
     except Exception as e:
-        print(f"An error occurred in the main execution: {e}")
+        print("Chatbot is not available. Please check the console for errors during initialization.")
